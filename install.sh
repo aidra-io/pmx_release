@@ -27,8 +27,8 @@ PROG="pmx install"
 # pmx binary ("<platform>=<sha256> …"). Empty in the repository copy. Check this script by
 # hand with: minisign -Vm install.sh -P <key> (key: docs/install.md).
 PMX_SIGNING_KEYS="RWRu5PCt5yCSpMbA05EfMQAiknfqoxtbIZwE0tSCw5iRhpJht/4gboqm"
-PMX_RELEASE_VERSION="9.28.0"
-PMX_RELEASE_SHA256S="linux-x64=ddf3deb9552d6233eee74b0be45e6b05309744cf70f4b5e1a7d681bef13b7c0b linux-arm64=c069a3874e059c3557a145b0ab4be7bcc742d4f2b9bc334f62c8dab7d96f410a linux-x64-musl=9911adbf6b102ba0fd49203f1d5b68cc435a30b5903c93f702d39a1ea2199e25 linux-arm64-musl=76251efdabf4a62fc7ab00005f241c9ed283a688f5b4f44815a7bc3aaf8a9185 linux-armhf=d97f0f04db89bc5b717ea7c4385cf2ff6b64fdc20e1c553a2cf69d8839adcc50 darwin-x64=dbe5214c31714678909c098ed3ae943e8d132e60b27d193c141211296b872e94 darwin-arm64=8a0c1badbf8f37f2be4eed31bd0028b51cf5fb40442aa5ba3eac217ac5f4d9be"
+PMX_RELEASE_VERSION="9.28.1"
+PMX_RELEASE_SHA256S="linux-x64=fddce3b6afea9c9a7d2062560087790d51581cd46ba392e4146c39d7200f7adf linux-arm64=72670270179e85153725e818ee7f9f61da56808ecd710b1e261bd8cbb4d911e9 linux-x64-musl=9f2b5b5b935db252bc95212ae22f52b8630f0558da888fac8915121890af92d4 linux-arm64-musl=b1131809d972f421b89db78c26c349bbaa66430bffd977f66269e0c510a161c5 linux-armhf=af721ae1f6f06f81ca285bd5fffc6d6a38f697ab38e87c3f8f43fa51115f999d darwin-x64=7a11139d27b79cc4ef7bc8319613c0b309c14bc4e5342254be955eae04ebc2b6 darwin-arm64=91f52759776a8fd818a5b988b938b7f2effe7336a3a232acda7e6d6660259eb1"
 
 usage() {
     cat <<'EOF'
@@ -188,6 +188,8 @@ USER_ID=$(id -u)
 UNIT="pmx-$USER_NAME"
 # pm2 compatibility: the service pm2 and pmx before 9.28 installed (02-decisions D-79)
 OLD_UNIT="pm2-$USER_NAME"
+# Its drop-ins (`systemctl edit pm2-<user>`), carried to $UNIT (D-79 note, 9.28.1)
+OLD_DROPINS="/etc/systemd/system/$OLD_UNIT.service.d"
 
 # Keys never reach pmx's environment (09 PM2-163): script-local copies only, passed as
 # `pmx link` arguments. PM2_PUBLIC_KEY / PM2_SECRET_KEY / PM2_MACHINE_NAME: the names
@@ -1074,6 +1076,7 @@ setup_unit() {
     # 02-decisions D-79: the pm2-<user> service is moved to pmx-<user> by `pmx startup`
     # below (its running daemon stays where it is until the next restart or reboot).
     OLD_UNIT_FILE=$(unit_file_of "$OLD_UNIT")
+    carry_dropins
     if [ -n "$UNIT_FILE" ]; then
         _fix_exec=0
         unit_runs_pmx "$UNIT_FILE" || _fix_exec=1
@@ -1160,6 +1163,50 @@ setup_unit() {
 
 unit_is_active() { [ "$(systemctl is-active "$1" 2>/dev/null || true)" = active ]; }
 
+# 0 when the installed pmx ($VERSION) has `pmx __systemd-dropins` (9.28.1 on).
+carries_dropins() {
+    _cv=${VERSION%%[-+]*}
+    _cmaj=${_cv%%.*}
+    _crest=${_cv#*.}
+    _cmin=${_crest%%.*}
+    _cpat=${_crest#*.}
+    _cpat=${_cpat%%.*}
+    for _n in "$_cmaj" "$_cmin" "$_cpat"; do
+        case "$_n" in "" | *[!0-9]*) return 1 ;; esac
+    done
+    [ "$_cmaj" -gt 9 ] && return 0
+    [ "$_cmaj" -eq 9 ] || return 1
+    [ "$_cmin" -gt 28 ] && return 0
+    [ "$_cmin" -eq 28 ] && [ "$_cpat" -ge 1 ]
+}
+
+# 02-decisions D-79 note (9.28.1): the drop-ins of $OLD_UNIT ($OLD_DROPINS, from `systemctl
+# edit`: extra Environment=, SupplementaryGroups= …) are copied to $UNIT.service.d by pmx itself
+# (`pmx __systemd-dropins`, the code `pmx startup` and the agent's self-updater use): a
+# same-named, different file there is kept and the copy gets a suffixed name. The old directory
+# goes once $OLD_UNIT is gone. pmx prints file names only, never their contents.
+carry_dropins() {
+    [ -d "$OLD_DROPINS" ] || return 0
+    carries_dropins || return 0
+    if is_dry; then
+        say "[dry-run] would carry the systemd drop-ins of $OLD_UNIT ($OLD_DROPINS) to $UNIT"
+        return 0
+    fi
+    _dcmd="$BIN __systemd-dropins $USER_NAME"
+    if [ "$CAN_ROOT" != 1 ]; then
+        warn "could not carry the systemd drop-ins of $OLD_UNIT ($OLD_DROPINS) to $UNIT (needs sudo); run: sudo $_dcmd"
+        return 0
+    fi
+    _drc=0
+    as_root "$BIN" __systemd-dropins "$USER_NAME" >"$TMP/dropins.log" 2>&1 || _drc=$?
+    while IFS= read -r _dl; do
+        say "$_dl"
+    done <"$TMP/dropins.log"
+    if [ "$_drc" != 0 ]; then
+        warn "could not carry every systemd drop-in of $OLD_UNIT ($OLD_DROPINS) to $UNIT; run: sudo $_dcmd"
+    fi
+}
+
 # The daemon runs under the service: $UNIT, or (until it moves, D-79) $OLD_UNIT.
 unit_active() { unit_is_active "$UNIT" || unit_is_active "$OLD_UNIT"; }
 
@@ -1176,7 +1223,10 @@ retire_old_unit() {
     as_root systemctl disable "$OLD_UNIT" >/dev/null 2>&1 || true
     if ! { as_root rm -f "$_of" && as_root systemctl daemon-reload; }; then
         warn "could not remove $_of (run: sudo systemctl disable $OLD_UNIT && sudo rm -f $_of && sudo systemctl daemon-reload)"
+        return 0
     fi
+    # its drop-ins are in $UNIT.service.d: the old directory goes too
+    carry_dropins
 }
 
 # 20 §3.3 (D-77): a pmx daemon from 9.27.0 on can hand over: it execs the new binary in its
