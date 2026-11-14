@@ -1,10 +1,11 @@
 #!/bin/sh
 # Copyright (c) 2026 Mike Warriner. All rights reserved. Proprietary — see LICENSE.
 #
-# pmx installer: installs the `pmx` binary with its `pm2`, `pm2-runtime`, `pm2-dev` and
-# `pm2-docker` aliases, hands over from a running pm2 / pm2_prodman / older pmx daemon
-# (save its process list, stop it, resurrect it under pmx), installs and enables the
-# systemd service (`pmx startup systemd`), links to prodman, and removes other pm2 installs.
+# pmx installer: installs the `pmx` binary with its pm2 compatibility aliases (`pm2`,
+# `pm2-runtime`, `pm2-dev`, `pm2-docker`), hands over from a running pm2 / pm2_prodman / older
+# pmx daemon (save its process list, stop it, resurrect it under pmx), installs and enables
+# the systemd service pmx-<user> (`pmx startup systemd`; a pm2-<user> service is moved to it,
+# 02-decisions D-79), links to prodman, and removes other pm2 installs.
 # Re-running it is safe: a healthy host is left alone (idempotent repair).
 #
 #   curl -fsSL https://pmx.aidra.io/install.sh | sh
@@ -13,7 +14,7 @@
 # Releases are public (02-decisions D-30): no token is needed to download them.
 #
 # Behaviour: docs/install.md; adapted from prodman/specs/09-client-pm2.md §9 for pmx
-# (02-decisions D-01, D-13, D-16, D-30, D-31; 50-agent AG-801, AG-812…814).
+# (02-decisions D-01, D-13, D-16, D-30, D-31, D-78, D-79; 50-agent AG-801, AG-812…814).
 
 set -eu
 umask 022
@@ -26,8 +27,8 @@ PROG="pmx install"
 # pmx binary ("<platform>=<sha256> …"). Empty in the repository copy. Check this script by
 # hand with: minisign -Vm install.sh -P <key> (key: docs/install.md).
 PMX_SIGNING_KEYS="RWRu5PCt5yCSpMbA05EfMQAiknfqoxtbIZwE0tSCw5iRhpJht/4gboqm"
-PMX_RELEASE_VERSION="9.27.0"
-PMX_RELEASE_SHA256S="linux-x64=29db828af44a8eb8065601fda790922e77cf4777f3f619d0ae4288818ab4dff9 linux-arm64=9ad3546db6192e0c06923659c7fb419e39f24191a127bbf4b2678d043ab8b1c3 linux-x64-musl=1c9ab26d362fec3c4b84b91c136c9f6e402e7cb6330ec0a6f455b2c13356cccb linux-arm64-musl=70dd5ccd1b348d52c376dcc384795e40be3e9a35e1969c6473ea88f86eb3a2b1 linux-armhf=a44ca6c888ce6da5d689fbf7ca6556cb65b096cc695ffe6710fc9db8126ad20f darwin-x64=0a96208fe5554a466181b80de93332040eca9b233acfb360e8f3755f8f50a9e9 darwin-arm64=174892d0565d571907536f2d2278519bbdcff5595ede0255087607f8a8f61325"
+PMX_RELEASE_VERSION="9.28.0"
+PMX_RELEASE_SHA256S="linux-x64=ddf3deb9552d6233eee74b0be45e6b05309744cf70f4b5e1a7d681bef13b7c0b linux-arm64=c069a3874e059c3557a145b0ab4be7bcc742d4f2b9bc334f62c8dab7d96f410a linux-x64-musl=9911adbf6b102ba0fd49203f1d5b68cc435a30b5903c93f702d39a1ea2199e25 linux-arm64-musl=76251efdabf4a62fc7ab00005f241c9ed283a688f5b4f44815a7bc3aaf8a9185 linux-armhf=d97f0f04db89bc5b717ea7c4385cf2ff6b64fdc20e1c553a2cf69d8839adcc50 darwin-x64=dbe5214c31714678909c098ed3ae943e8d132e60b27d193c141211296b872e94 darwin-arm64=8a0c1badbf8f37f2be4eed31bd0028b51cf5fb40442aa5ba3eac217ac5f4d9be"
 
 usage() {
     cat <<'EOF'
@@ -40,7 +41,7 @@ Options:
   --dir <dir>        install directory (env PMX_INSTALL_DIR, default ~/.local/bin)
   --base-url <url>   directory holding the assets and .sha256 files (env PMX_BASE_URL)
   --no-setup         install the binary and aliases only (env PMX_SETUP=0)
-  --uninstall        stop pmx, remove its service, binary and aliases (keeps PM2_HOME)
+  --uninstall        stop pmx, remove its service, binary and aliases (keeps the pmx home)
   --print-platform   print the release asset this host needs (e.g. linux-armhf) and exit
   -h, --help         this help
 
@@ -51,8 +52,8 @@ Environment:
   PMX_GITHUB_TOKEN (download through the GitHub API, for a private mirror; GITHUB_TOKEN /
   GH_TOKEN are used too, but only when PMX_REPO names another repository),
   PRODMAN_URL + PM2_PUBLIC_KEY + PM2_SECRET_KEY [+ PM2_MACHINE_NAME] (link to a bucket;
-  relinks when the host is linked to another bucket or URL), PM2_HOME (default ~/.pm2),
-  PM2_NODE (node used for the service PATH).
+  relinks when the host is linked to another bucket or URL), PMX_HOME (default ~/.pmx, or
+  an existing ~/.pm2; PM2_HOME is honoured too), PM2_NODE (node used for the service PATH).
 EOF
 }
 
@@ -148,20 +149,49 @@ GH_TOKEN_VALUE=${PMX_GITHUB_TOKEN:-}
 if [ -z "$GH_TOKEN_VALUE" ] && [ "$REPO" != "$DEFAULT_REPO" ]; then
     GH_TOKEN_VALUE=${GITHUB_TOKEN:-${GH_TOKEN:-}}
 fi
-PM2_HOME=${PM2_HOME:-$HOME/.pm2}
-PM2_HOME=${PM2_HOME%/}
-export PM2_HOME
+# The pmx home (02-decisions D-78): PMX_HOME, else PM2_HOME (pm2 compatibility), else ~/.pmx,
+# except that an existing ~/.pm2 home (pm2, or pmx before 9.28) keeps being used. Nothing is
+# moved. Both names are exported so an older pmx binary uses the same home.
+is_home_dir() {
+    for _hf in module_conf.json dump.pm2 pm2.pid rpc.sock agent.json5; do
+        if [ -e "$1/$_hf" ] || [ -L "$1/$_hf" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+default_home() {
+    if ! is_home_dir "$1/.pmx" && is_home_dir "$1/.pm2"; then
+        printf '%s' "$1/.pm2"
+    else
+        printf '%s' "$1/.pmx"
+    fi
+}
+if [ -n "${PMX_HOME:-}" ]; then
+    :
+elif [ -n "${PM2_HOME:-}" ]; then
+    PMX_HOME=$PM2_HOME
+else
+    PMX_HOME=$(default_home "$HOME")
+fi
+PMX_HOME=${PMX_HOME%/}
+PM2_HOME=$PMX_HOME
+export PMX_HOME PM2_HOME
 BIN="$INSTALL_DIR/pmx"
 # Licences of the third-party code in the binary (a release asset), installed next to it.
 NOTICES_ASSET=THIRD_PARTY_NOTICES.md
 NOTICES_FILE="$INSTALL_DIR/pmx-THIRD_PARTY_NOTICES.md"
+# pm2 compatibility: the pm2 command names
 ALIASES="pm2 pm2-runtime pm2-dev pm2-docker"
 USER_NAME=$(id -un 2>/dev/null || printf '%s' "${USER:-}")
 USER_ID=$(id -u)
-UNIT="pm2-$USER_NAME"
+UNIT="pmx-$USER_NAME"
+# pm2 compatibility: the service pm2 and pmx before 9.28 installed (02-decisions D-79)
+OLD_UNIT="pm2-$USER_NAME"
 
 # Keys never reach pmx's environment (09 PM2-163): script-local copies only, passed as
-# `pmx link` arguments.
+# `pmx link` arguments. PM2_PUBLIC_KEY / PM2_SECRET_KEY / PM2_MACHINE_NAME: the names
+# prodman's install command uses (pm2 compatibility).
 L_URL=${PRODMAN_URL:-}
 L_PUBLIC=${PM2_PUBLIC_KEY:-}
 L_SECRET=${PM2_SECRET_KEY:-}
@@ -648,15 +678,15 @@ install_binary() {
     install_web
 }
 
-# The $PM2_HOME layout, created as this user so later root-run commands (pmx startup)
+# The pmx home layout, created as this user so later root-run commands (pmx startup)
 # never own it (10-cli CLI-003).
 ensure_home() {
     if is_dry; then
-        [ -d "$PM2_HOME" ] || say "[dry-run] would create $PM2_HOME"
+        [ -d "$PMX_HOME" ] || say "[dry-run] would create $PMX_HOME"
         return
     fi
-    mkdir -p "$PM2_HOME/logs" "$PM2_HOME/pids" "$PM2_HOME/modules" || die "cannot create $PM2_HOME"
-    [ -f "$PM2_HOME/module_conf.json" ] || printf '{}' >"$PM2_HOME/module_conf.json"
+    mkdir -p "$PMX_HOME/logs" "$PMX_HOME/pids" "$PMX_HOME/modules" || die "cannot create $PMX_HOME"
+    [ -f "$PMX_HOME/module_conf.json" ] || printf '{}' >"$PMX_HOME/module_conf.json"
 }
 
 # --------------------------------------------------------------------------- privilege
@@ -717,16 +747,18 @@ cmdline_of() {
     fi
 }
 
-# pid of an old-style titled daemon for this PM2_HOME ("PM2 v<v>: God Daemon (<home>)").
+# pid of a titled daemon for this home: "pmx v<v>: daemon (<home>)" (pmx 9.28 on) or
+# "PM2 v<v>: God Daemon (<home>)" (pm2, and pmx before 9.28; DMN-020).
 find_titled_daemon() {
-    _title="God Daemon ($PM2_HOME)"
+    _title="God Daemon ($PMX_HOME)"
+    _ptitle="daemon ($PMX_HOME)"
     if [ -d /proc/1 ]; then
         for _d in /proc/[0-9]*; do
             [ -r "$_d/cmdline" ] || continue
             _c=$(tr '\0' ' ' <"$_d/cmdline" 2>/dev/null) || continue
             _c=$(strip_emulator "$_c")
             case "$_c" in
-                "PM2 v"*": $_title"*)
+                "PM2 v"*": $_title"* | "pmx v"*": $_ptitle"*)
                     _o=$(stat -c %u "$_d" 2>/dev/null || echo "")
                     if [ -z "$_o" ] || [ "$_o" = "$USER_ID" ]; then
                         printf '%s\n' "${_d#/proc/}"
@@ -739,7 +771,7 @@ find_titled_daemon() {
         ps -axo pid=,uid=,args= 2>/dev/null | while read -r _p _u _a; do
             _a=$(strip_emulator "$_a")
             case "$_a" in
-                "PM2 v"*": $_title"*)
+                "PM2 v"*": $_title"* | "pmx v"*": $_ptitle"*)
                     if [ "$_u" = "$USER_ID" ]; then
                         printf '%s\n' "$_p"
                         return 0
@@ -757,8 +789,8 @@ detect_daemon() {
     DKIND=""
     DVER="?"
     DCURRENT=0
-    if [ -r "$PM2_HOME/pm2.pid" ]; then
-        _p=$(tr -dc '0-9' <"$PM2_HOME/pm2.pid" 2>/dev/null || true)
+    if [ -r "$PMX_HOME/pm2.pid" ]; then
+        _p=$(tr -dc '0-9' <"$PMX_HOME/pm2.pid" 2>/dev/null || true)
         pid_alive "$_p" && DPID=$_p
     fi
     [ -n "$DPID" ] || DPID=$(find_titled_daemon)
@@ -766,8 +798,14 @@ detect_daemon() {
     _cmd=$(cmdline_of "$DPID")
     _path=""
     case "$_cmd" in
+        "pmx v"*": daemon ("*)
+            # pmx 9.28 on: "pmx v<version>: daemon (<home>)" (DMN-020).
+            DVER=${_cmd#pmx v}
+            DVER=${DVER%%:*}
+            DKIND=pmx
+            ;;
         "PM2 v"*": God Daemon"*)
-            # pm2 and pmx both title their daemon "PM2 v<version>: God Daemon (<home>)" (DMN-020).
+            # pm2, and pmx before 9.28: "PM2 v<version>: God Daemon (<home>)" (DMN-020).
             DVER=${_cmd#PM2 v}
             DVER=${DVER%%:*}
             case "$DVER" in
@@ -842,7 +880,7 @@ daemon_label() {
     case "$DKIND" in
         pm2) printf 'pm2 %s' "$DVER" ;;
         pmx) printf 'pmx %s' "$DVER" ;;
-        *) printf 'an unknown pm2 daemon' ;;
+        *) printf 'an unknown daemon' ;;
     esac
 }
 
@@ -888,12 +926,12 @@ HANDOVER_FAILED=0
 # Save the running daemon's list and stop it. Returns 1 (and leaves it running) on failure.
 save_and_stop() {
     if ! save_list; then
-        warn "could not save the process list of the running PM2 (pid $DPID): it was left running"
+        warn "could not save the process list of the running daemon (pid $DPID): it was left running"
         HANDOVER_FAILED=1
         return 1
     fi
     if ! stop_daemon; then
-        warn "could not stop the running PM2 (pid $DPID)"
+        warn "could not stop the running daemon (pid $DPID)"
         HANDOVER_FAILED=1
         return 1
     fi
@@ -906,7 +944,7 @@ resurrect_outside_service() {
     fi
     if ! PM2_SERVICE_GUARD=off pmx_cmd resurrect >"$TMP/resurrect.log" 2>&1; then
         cat "$TMP/resurrect.log" >&2
-        warn "pmx resurrect failed: your apps are listed in $PM2_HOME/dump.pm2 (run: pm2 resurrect)"
+        warn "pmx resurrect failed: your apps are listed in $PMX_HOME/dump.pm2 (run: pmx resurrect)"
         return 1
     fi
 }
@@ -923,8 +961,9 @@ detect_systemd() {
     fi
 }
 
+# The unit file of $1 (default $UNIT), or nothing.
 unit_file_of() {
-    _f=$(systemctl show -p FragmentPath "$UNIT" 2>/dev/null | sed -n 's/^FragmentPath=//p')
+    _f=$(systemctl show -p FragmentPath "${1:-$UNIT}" 2>/dev/null | sed -n 's/^FragmentPath=//p')
     if [ -n "$_f" ] && [ -f "$_f" ]; then
         printf '%s\n' "$_f"
     fi
@@ -944,12 +983,13 @@ WANT_PATH=""
 WANT_NODE=""
 NODE_NOTE=""
 startup_plan() {
-    _plan=$(env "PATH=$PATH" "PM2_HOME=$PM2_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true NO_COLOR=1 \
+    _plan=$(env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true NO_COLOR=1 \
         PMX_STARTUP_DRY_RUN=1 "$BIN" startup systemd -u "$USER_NAME" --hp "$HOME" 2>/dev/null |
         sed "s/$ESC\[[0-9;]*m//g") || _plan=""
-    WANT_PATH=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM2\] Service PATH: //p' | head -n 1)
-    NODE_NOTE=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM2\]\(\[WARN\]\)\{0,1\} Node\.js for the service: //p' | head -n 1)
-    WANT_NODE=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM2\] Node\.js for the service: \([^ ]*\) (.*/\1/p' | head -n 1)
+    # "[PMX] …" (pmx 9.28 on) or "[PM2] …" (an older pmx pinned with --version)
+    WANT_PATH=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM[2X]\] Service PATH: //p' | head -n 1)
+    NODE_NOTE=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM[2X]\]\(\[WARN\]\)\{0,1\} Node\.js for the service: //p' | head -n 1)
+    WANT_NODE=$(printf '%s\n' "$_plan" | sed -n 's/^\[PM[2X]\] Node\.js for the service: \([^ ]*\) (.*/\1/p' | head -n 1)
 }
 
 # 0 when ExecStart/ExecReload/ExecStop all run pmx itself (not an alias or another binary).
@@ -1031,6 +1071,9 @@ setup_unit() {
         say "Node.js for $UNIT: $NODE_NOTE"
     fi
     UNIT_FILE=$(unit_file_of)
+    # 02-decisions D-79: the pm2-<user> service is moved to pmx-<user> by `pmx startup`
+    # below (its running daemon stays where it is until the next restart or reboot).
+    OLD_UNIT_FILE=$(unit_file_of "$OLD_UNIT")
     if [ -n "$UNIT_FILE" ]; then
         _fix_exec=0
         unit_runs_pmx "$UNIT_FILE" || _fix_exec=1
@@ -1049,7 +1092,7 @@ setup_unit() {
             UNIT_CHANGED=1
             return 0
         fi
-        _staged="$PM2_HOME/$UNIT.service.new"
+        _staged="$PMX_HOME/$UNIT.service.new"
         cp "$UNIT_FILE" "$_staged.tmp" || { warn "cannot read $UNIT_FILE"; return 0; }
         if [ "$_fix_exec" = 1 ]; then
             # Only the first word of each Exec line changes; the rest of the unit is kept.
@@ -1078,8 +1121,15 @@ setup_unit() {
         return 0
     fi
     # No unit: pmx's own generator (60-extras §6, D-20, D-36: pmx finds Node.js itself).
-    say "installing /etc/systemd/system/$UNIT.service to run $BIN (pmx startup systemd)"
-    _cmd="env PATH=\$PATH PM2_HOME=$PM2_HOME $BIN startup systemd -u $USER_NAME --hp $HOME"
+    if [ -n "$OLD_UNIT_FILE" ]; then
+        say "moving the systemd service $OLD_UNIT ($OLD_UNIT_FILE) to $UNIT (pmx startup systemd)"
+        if unit_is_active "$OLD_UNIT"; then
+            say "its running daemon stays under $OLD_UNIT until the next restart or reboot; then $UNIT runs it"
+        fi
+    else
+        say "installing /etc/systemd/system/$UNIT.service to run $BIN (pmx startup systemd)"
+    fi
+    _cmd="env PATH=\$PATH PMX_HOME=$PMX_HOME $BIN startup systemd -u $USER_NAME --hp $HOME"
     if [ "$CAN_ROOT" != 1 ]; then
         warn "could not install the systemd service $UNIT (needs sudo); run: sudo $_cmd, then re-run this script"
         return 0
@@ -1090,7 +1140,7 @@ setup_unit() {
         UNIT_CHANGED=1
         return 0
     fi
-    if as_root env "PATH=$PATH" "PM2_HOME=$PM2_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true \
+    if as_root env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true \
         ${PM2_NODE:+"PM2_NODE=$PM2_NODE"} ${NVM_DIR:+"NVM_DIR=$NVM_DIR"} \
         ${BUN_INSTALL:+"BUN_INSTALL=$BUN_INSTALL"} \
         "$BIN" startup systemd -u "$USER_NAME" --hp "$HOME" >"$TMP/startup.log" 2>&1 &&
@@ -1098,13 +1148,36 @@ setup_unit() {
         UNIT_FILE=$(unit_file_of)
         UNIT_OK=1
         UNIT_CHANGED=1
+        if [ -n "$OLD_UNIT_FILE" ] && unit_is_active "$OLD_UNIT"; then
+            # only the name changed: no restart for it (D-79)
+            UNIT_CHANGED=0
+        fi
     else
         cat "$TMP/startup.log" >&2
         warn "could not install the systemd service $UNIT; run: sudo $_cmd, then re-run this script"
     fi
 }
 
-unit_active() { [ "$(systemctl is-active "$UNIT" 2>/dev/null || true)" = active ]; }
+unit_is_active() { [ "$(systemctl is-active "$1" 2>/dev/null || true)" = active ]; }
+
+# The daemon runs under the service: $UNIT, or (until it moves, D-79) $OLD_UNIT.
+unit_active() { unit_is_active "$UNIT" || unit_is_active "$OLD_UNIT"; }
+
+# D-79: once $UNIT took over, the inactive $OLD_UNIT is disabled and its file removed.
+retire_old_unit() {
+    _of=$(unit_file_of "$OLD_UNIT")
+    [ -n "$_of" ] || return 0
+    unit_is_active "$OLD_UNIT" && return 0
+    if is_dry; then
+        say "[dry-run] would remove the old service $OLD_UNIT ($_of)"
+        return 0
+    fi
+    say "removing the old service $OLD_UNIT ($_of): $UNIT replaces it"
+    as_root systemctl disable "$OLD_UNIT" >/dev/null 2>&1 || true
+    if ! { as_root rm -f "$_of" && as_root systemctl daemon-reload; }; then
+        warn "could not remove $_of (run: sudo systemctl disable $OLD_UNIT && sudo rm -f $_of && sudo systemctl daemon-reload)"
+    fi
+}
 
 # 20 §3.3 (D-77): a pmx daemon from 9.27.0 on can hand over: it execs the new binary in its
 # own pid and every app keeps running.
@@ -1139,7 +1212,7 @@ try_handover() {
             ;;
         *)
             cat "$TMP/update.log" >&2
-            warn "the daemon hand-over failed: $(daemon_label) keeps running, nothing was restarted (see $PM2_HOME/pm2.log)"
+            warn "the daemon hand-over failed: $(daemon_label) keeps running, nothing was restarted (see $PMX_HOME/pm2.log)"
             HANDOVER_FAILED=1
             return 0
             ;;
@@ -1148,6 +1221,7 @@ try_handover() {
 
 # Puts the daemon under the unit, running this binary (09 PM2-167, 50 AG-814).
 run_under_unit() {
+    retire_old_unit
     if unit_active; then
         if [ -n "$DPID" ] && [ "$DCURRENT" = 1 ] && [ "$UNIT_CHANGED" = 0 ]; then
             return 0
@@ -1160,18 +1234,20 @@ run_under_unit() {
         fi
         say "restarting $UNIT (running $(daemon_label), installed pmx $VERSION)"
         if [ -n "$DPID" ] && ! save_list; then
-            warn "could not save the process list of the running PM2 (pid $DPID): $UNIT not restarted"
+            warn "could not save the process list of the running daemon (pid $DPID): $UNIT not restarted"
             HANDOVER_FAILED=1
             return 0
         fi
+        # D-79: restarting $UNIT also stops a daemon still under $OLD_UNIT (Conflicts=)
         if ! as_root systemctl restart "$UNIT"; then
             warn "systemctl restart $UNIT failed (see: systemctl status $UNIT)"
         fi
+        retire_old_unit
         return 0
     fi
     _killed=0
     if [ -n "$DPID" ]; then
-        say "moving the running PM2 ($(daemon_label), pid $DPID) into $UNIT"
+        say "moving the running daemon ($(daemon_label), pid $DPID) into $UNIT"
         save_and_stop || return 0
         _killed=1
     fi
@@ -1183,10 +1259,11 @@ run_under_unit() {
     if ! as_root systemctl start "$UNIT"; then
         warn "systemctl start $UNIT failed (see: systemctl status $UNIT)"
         if [ "$_killed" = 1 ]; then
-            warn "PM2 restarted outside systemd"
+            warn "pmx restarted outside systemd"
             resurrect_outside_service || true
         fi
     fi
+    retire_old_unit
 }
 
 # --------------------------------------------------------------------------- prodman link
@@ -1208,25 +1285,25 @@ root_url() {
 LINKED=0
 link_prodman() {
     if [ -z "$L_PUBLIC" ] && [ -z "$L_SECRET" ]; then
-        [ -f "$PM2_HOME/agent.json5" ] && LINKED=1
+        [ -f "$PMX_HOME/agent.json5" ] && LINKED=1
         return 0
     fi
     if [ -z "$L_URL" ] || [ -z "$L_PUBLIC" ] || [ -z "$L_SECRET" ]; then
         warn "not linked: set PRODMAN_URL, PM2_PUBLIC_KEY and PM2_SECRET_KEY together"
-        [ -f "$PM2_HOME/agent.json5" ] && LINKED=1
+        [ -f "$PMX_HOME/agent.json5" ] && LINKED=1
         return 0
     fi
     # same bucket and same server → nothing; another bucket or server → relink (D-69)
-    _cur_url=$(sed -n 's/.*"info_node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PM2_HOME/agent.json5" 2>/dev/null | head -n 1)
-    if [ -f "$PM2_HOME/agent.json5" ] &&
-        grep -q "\"public_key\"[[:space:]]*:[[:space:]]*\"$L_PUBLIC\"" "$PM2_HOME/agent.json5" 2>/dev/null; then
+    _cur_url=$(sed -n 's/.*"info_node"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PMX_HOME/agent.json5" 2>/dev/null | head -n 1)
+    if [ -f "$PMX_HOME/agent.json5" ] &&
+        grep -q "\"public_key\"[[:space:]]*:[[:space:]]*\"$L_PUBLIC\"" "$PMX_HOME/agent.json5" 2>/dev/null; then
         if [ "$(root_url "$_cur_url")" = "$(root_url "$L_URL")" ]; then
             say "already linked to this bucket"
             LINKED=1
             return 0
         fi
         say "linked to this bucket at ${_cur_url:-the default server}: relinking to $L_URL"
-    elif [ -f "$PM2_HOME/agent.json5" ] && grep -q '"public_key"' "$PM2_HOME/agent.json5" 2>/dev/null; then
+    elif [ -f "$PMX_HOME/agent.json5" ] && grep -q '"public_key"' "$PMX_HOME/agent.json5" 2>/dev/null; then
         say "linked to another bucket: relinking"
     fi
     say "linking to $L_URL"
@@ -1242,9 +1319,9 @@ link_prodman() {
         pmx_cmd link "$L_SECRET" "$L_PUBLIC" --info-node "$L_URL" >/dev/null 2>&1 || _rc=$?
     fi
     if [ "${_rc:-0}" != 0 ]; then
-        warn "pmx link failed (see $PM2_HOME/agent.log)"
+        warn "pmx link failed (see $PMX_HOME/agent.log)"
     fi
-    [ -f "$PM2_HOME/agent.json5" ] && LINKED=1
+    [ -f "$PMX_HOME/agent.json5" ] && LINKED=1
     return 0
 }
 
@@ -1252,7 +1329,7 @@ AGENT_RUNNING=0
 agent_running() { pmx_cmd link info >/dev/null 2>&1; }
 
 check_agent() {
-    [ -f "$PM2_HOME/agent.json5" ] || return 0
+    [ -f "$PMX_HOME/agent.json5" ] || return 0
     detect_daemon
     [ -n "$DPID" ] || return 0
     if is_dry; then
@@ -1271,7 +1348,7 @@ check_agent() {
     if pmx_cmd link >/dev/null 2>&1 && agent_running; then
         AGENT_RUNNING=1
     else
-        warn "could not start the prodman agent (see $PM2_HOME/agent.log)"
+        warn "could not start the prodman agent (see $PMX_HOME/agent.log)"
     fi
 }
 
@@ -1316,14 +1393,17 @@ do_uninstall() {
     VERSION=$("$BIN" --binary-info 2>/dev/null | sed -n 's/^{"version":"\([^"]*\)".*/\1/p') || VERSION=""
     detect_daemon
     if [ -n "$DPID" ]; then
-        say "saving the process list to $PM2_HOME/dump.pm2 and stopping pmx (pid $DPID)"
+        say "saving the process list to $PMX_HOME/dump.pm2 and stopping pmx (pid $DPID)"
         save_list || warn "could not save the process list"
     fi
-    if [ "$SYSTEMD" = 1 ] && [ -n "$(unit_file_of)" ]; then
-        _e=$(unit_exec "$(unit_file_of)")
+    # D-79: `pmx unstartup` removes pmx-<user> and pm2-<user>
+    _uf=$(unit_file_of)
+    [ -n "$_uf" ] || _uf=$(unit_file_of "$OLD_UNIT")
+    if [ "$SYSTEMD" = 1 ] && [ -n "$_uf" ]; then
+        _e=$(unit_exec "$_uf")
         if [ "$(resolve "$_e")" = "$(resolve "$BIN")" ]; then
             say "removing the systemd service $UNIT"
-            as_root env PM2_HOME="$PM2_HOME" "$BIN" unstartup systemd -u "$USER_NAME" >/dev/null 2>&1 ||
+            as_root env PMX_HOME="$PMX_HOME" PM2_HOME="$PMX_HOME" "$BIN" unstartup systemd -u "$USER_NAME" >/dev/null 2>&1 ||
                 warn "could not remove $UNIT; run: sudo $BIN unstartup systemd -u $USER_NAME"
         fi
     fi
@@ -1343,7 +1423,7 @@ do_uninstall() {
     if [ -e "$NOTICES_FILE" ]; then
         run rm -f "$NOTICES_FILE"
     fi
-    say "removed pmx${VERSION:+ $VERSION} from $INSTALL_DIR; $PM2_HOME (logs, dump.pm2, agent.json5) was kept"
+    say "removed pmx${VERSION:+ $VERSION} from $INSTALL_DIR; $PMX_HOME (logs, dump.pm2, agent.json5) was kept"
     print_warnings
 }
 
@@ -1370,32 +1450,34 @@ summary() {
         detect_daemon
         if [ -n "$DPID" ]; then
             _m="pmx $VERSION is running"
-            if [ "$SYSTEMD" = 1 ] && [ "$UNIT_OK" = 1 ] && unit_active; then
+            if [ "$SYSTEMD" = 1 ] && [ "$UNIT_OK" = 1 ] && unit_is_active "$UNIT"; then
                 _m="$_m as the systemd service $UNIT"
+            elif [ "$SYSTEMD" = 1 ] && [ "$UNIT_OK" = 1 ] && unit_is_active "$OLD_UNIT"; then
+                _m="$_m as the systemd service $OLD_UNIT ($UNIT from the next restart or reboot)"
             fi
             [ "$AGENT_RUNNING" = 1 ] && _m="$_m, prodman agent running"
             if is_dry; then
                 _m="running now: $(daemon_label) (pid $DPID)"
             elif [ "$DCURRENT" != 1 ]; then
-                _m="PM2 is running ($(daemon_label), pid $DPID), not pmx $VERSION"
+                _m="a daemon is running ($(daemon_label), pid $DPID), not pmx $VERSION"
             fi
             say "$_m"
         elif is_dry; then
             say "no daemon is running now"
         else
-            say "pmx $VERSION is installed; no daemon is running yet (pm2 start <app>)"
+            say "pmx $VERSION is installed; no daemon is running yet (pmx startup to run it as a service, or pmx start <app> --autostart)"
         fi
         if [ "$LINKED" != 1 ]; then
-            say "not linked to prodman: run pm2 link to sign in and pick a bucket, or re-run with PRODMAN_URL, PM2_PUBLIC_KEY and PM2_SECRET_KEY (or run pm2 link <secret> <public>)"
+            say "not linked to prodman: run pmx link to sign in and pick a bucket, or re-run with PRODMAN_URL, PM2_PUBLIC_KEY and PM2_SECRET_KEY (or run pmx link <secret> <public>)"
         fi
         if [ "$SYSTEMD" != 1 ] && [ "$(uname -s)" = Darwin ]; then
-            say "to start pmx at login, run: pm2 startup (and the command it prints)"
+            say "to start pmx at login, run: pmx startup (and the command it prints)"
         fi
     fi
-    # The pm2_prodman binary unpacks its Bun runtime under $PM2_HOME/runtime (D-36).
-    if [ -d "$PM2_HOME/runtime" ] && [ -n "$(ls -A "$PM2_HOME/runtime" 2>/dev/null)" ]; then
-        _mb=$(du -sk "$PM2_HOME/runtime" 2>/dev/null | awk '{ printf "%.0f MB", $1 / 1024 }')
-        say "note: $PM2_HOME/runtime holds the pm2_prodman Bun runtime (${_mb:-size unknown}); pmx does not use it, so it can be removed: rm -rf $PM2_HOME/runtime"
+    # The pm2_prodman binary unpacks its Bun runtime under $PMX_HOME/runtime (D-36).
+    if [ -d "$PMX_HOME/runtime" ] && [ -n "$(ls -A "$PMX_HOME/runtime" 2>/dev/null)" ]; then
+        _mb=$(du -sk "$PMX_HOME/runtime" 2>/dev/null | awk '{ printf "%.0f MB", $1 / 1024 }')
+        say "note: $PMX_HOME/runtime holds the pm2_prodman Bun runtime (${_mb:-size unknown}); pmx does not use it, so it can be removed: rm -rf $PMX_HOME/runtime"
     fi
     _bin_real=$(resolve "$BIN")
     for _n in pmx pm2; do
@@ -1442,7 +1524,7 @@ main() {
         run_under_unit
     else
         if [ -n "$DPID" ] && [ "$DCURRENT" != 1 ] && ! try_handover; then
-            say "restarting PM2 (running $(daemon_label), installed pmx $VERSION)"
+            say "restarting the daemon (running $(daemon_label), installed pmx $VERSION)"
             if save_and_stop; then
                 resurrect_outside_service || true
             fi
@@ -1450,7 +1532,7 @@ main() {
         if [ "$SYSTEMD" = 1 ]; then
             detect_daemon
             if [ -n "$DPID" ]; then
-                warn "PM2 is not running as a systemd service: nothing restarts it after a crash or reboot"
+                warn "pmx is not running as a systemd service: nothing restarts it after a crash or reboot"
             fi
         fi
     fi
@@ -1458,7 +1540,7 @@ main() {
     link_prodman
     check_agent
     if [ "$HANDOVER_FAILED" = 1 ]; then
-        warn "other pm2 installs were kept because the running PM2 could not be handed over"
+        warn "other pm2 installs were kept because the running daemon could not be handed over"
     else
         remove_other_installs
     fi
