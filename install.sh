@@ -27,8 +27,8 @@ PROG="pmx install"
 # pmx binary ("<platform>=<sha256> …"). Empty in the repository copy. Check this script by
 # hand with: minisign -Vm install.sh -P <key> (key: docs/install.md).
 PMX_SIGNING_KEYS="RWRu5PCt5yCSpMbA05EfMQAiknfqoxtbIZwE0tSCw5iRhpJht/4gboqm"
-PMX_RELEASE_VERSION="9.32.0"
-PMX_RELEASE_SHA256S="linux-x64=c30f284e775b7d1a10ea11e2118db97a56c8b6a2f6cba1fff87c94e529da50b1 linux-arm64=06d27845f69e87e1d31f3fd0373c2bbcf35933820aae83bc2796c97c8f6aa2ea linux-x64-musl=ce6e63519076f0c9a1924834f4fcc49c35da7f61e52718ed83518c044f4379e3 linux-arm64-musl=0eaabf3d3b9de9951795913739e89eea3f615c9daf451330495b60c048443ea4 linux-armhf=49d2b57e3fa233738efad029ecfe99e7b16d17a46b9a78dc459b7af2acd29080 darwin-x64=a41e57080591e33b73660f0d0dcd2553568ccc67b82bbd17831daaae31e4b2ed darwin-arm64=1b12a21a6173e2b8d4c48dba4429ae91b0f3389cef78a5cdd9dade1ddde552a5"
+PMX_RELEASE_VERSION="9.33.0"
+PMX_RELEASE_SHA256S="linux-x64=408c3d77e246cf71895abf9f12238ef8f4d81052b6f2db14363999f6c829c2c5 linux-arm64=a4054401c6456c6c80a8ba11bfee6b18ea26e8eca86619291842ba2c7069a72a linux-x64-musl=5e10a9477b9281222799c9142b6fa2e3fd9aa0d2a22299bbac4f1dfade1c91d3 linux-arm64-musl=192368eb5c00c6f964e0bffcf7d3167bb3b7d34ee5c0d32c20f15cea343f15ff linux-armhf=8eaff5dba7cd44132e2eebc4d6a7b873432ef0f277c1753b81c7123ebd566d4b darwin-x64=b46a9faac3c452fae5fe8a4b1ecf6a223e73af6262277ec57b0261ffd607c76f darwin-arm64=afc678ef153148ad05748f65031c0297efac6e1cb41508e62489ae0bdaa55f70"
 
 usage() {
     cat <<'EOF'
@@ -51,9 +51,11 @@ Environment:
   PMX_PLATFORM (force an asset, e.g. linux-x64-musl or linux-armhf),
   PMX_GITHUB_TOKEN (download through the GitHub API, for a private mirror; GITHUB_TOKEN /
   GH_TOKEN are used too, but only when PMX_REPO names another repository),
-  PRODMAN_URL + PM2_PUBLIC_KEY + PM2_SECRET_KEY [+ PM2_MACHINE_NAME] (link to a bucket;
+  PRODMAN_URL + PMX_PUBLIC_KEY + PMX_SECRET_KEY [+ PMX_MACHINE_NAME] (link to a bucket;
   relinks when the host is linked to another bucket or URL), PMX_HOME (default ~/.pmx, or
-  an existing ~/.pm2; PM2_HOME is honoured too), PM2_NODE (node used for the service PATH).
+  an existing ~/.pm2), PMX_NODE (node used for the service PATH). The PM2_ names
+  (PM2_PUBLIC_KEY, PM2_SECRET_KEY, PM2_MACHINE_NAME, PM2_HOME, PM2_NODE) are accepted too;
+  the PMX_ name wins (pmx 9.33+).
 EOF
 }
 
@@ -192,24 +194,37 @@ OLD_UNIT="pm2-$USER_NAME"
 OLD_DROPINS="/etc/systemd/system/$OLD_UNIT.service.d"
 
 # Keys never reach pmx's environment (09 PM2-163): script-local copies only, passed as
-# `pmx link` arguments. PM2_PUBLIC_KEY / PM2_SECRET_KEY / PM2_MACHINE_NAME: the names
-# prodman's install command uses (pm2 compatibility).
+# `pmx link` arguments. PMX_PUBLIC_KEY / PMX_SECRET_KEY / PMX_MACHINE_NAME, or the PM2_
+# names prodman's older install commands use (pm2 compatibility): the PMX_ name wins, an
+# empty one counts as unset, and a PMX_/PM2_ pair with two different values is warned about
+# by name only (02 D-86).
+pmx_pick() { # <suffix>: the value of PMX_<suffix>, else PM2_<suffix>
+    eval "_px=\${PMX_$1:-}; _p2=\${PM2_$1:-}"
+    if [ -n "$_px" ] && [ -n "$_p2" ] && [ "$_px" != "$_p2" ]; then
+        warn "PMX_$1 and PM2_$1 are both set to different values; using PMX_$1"
+    fi
+    if [ -n "$_px" ]; then printf '%s' "$_px"; else printf '%s' "$_p2"; fi
+}
 L_URL=${PRODMAN_URL:-}
-L_PUBLIC=${PM2_PUBLIC_KEY:-}
-L_SECRET=${PM2_SECRET_KEY:-}
-L_MACHINE=${PM2_MACHINE_NAME:-}
+L_PUBLIC=$(pmx_pick PUBLIC_KEY)
+L_SECRET=$(pmx_pick SECRET_KEY)
+L_MACHINE=$(pmx_pick MACHINE_NAME)
+L_NODE=$(pmx_pick NODE)
 # PM2_RELINK is no longer needed (any other bucket or URL relinks); still cleared
-unset PRODMAN_URL PM2_PUBLIC_KEY PM2_SECRET_KEY PM2_MACHINE_NAME PM2_RELINK
+unset PRODMAN_URL PMX_PUBLIC_KEY PM2_PUBLIC_KEY PMX_SECRET_KEY PM2_SECRET_KEY \
+    PMX_MACHINE_NAME PM2_MACHINE_NAME PMX_RELINK PM2_RELINK _px _p2
 if [ -n "$L_URL" ]; then
-    # 09 open issue 6: a stray KEYMETRICS_NODE would override the URL given here.
+    # 09 open issue 6: a stray KEYMETRICS_NODE overrode the URL given here in pmx before 9.33
+    # (no longer read since, 02 D-86); still cleared for older binaries.
     unset KEYMETRICS_NODE
 fi
 
 # Every pmx call: no inherited agent/CLI state (09 PM2-163).
 pmx_cmd() {
     (
-        unset PM2_AGENT_ONLINE PM2_INTERACTOR_PROCESSING PM2_STATUS PM2_USAGE PM2_SECRET_KEY \
-            PM2_PUBLIC_KEY 2>/dev/null || true
+        unset PMX_AGENT_ONLINE PM2_AGENT_ONLINE PMX_INTERACTOR_PROCESSING \
+            PM2_INTERACTOR_PROCESSING PMX_STATUS PM2_STATUS PMX_USAGE PM2_USAGE \
+            PMX_SECRET_KEY PM2_SECRET_KEY PMX_PUBLIC_KEY PM2_PUBLIC_KEY 2>/dev/null || true
         exec "$BIN" "$@"
     )
 }
@@ -913,7 +928,7 @@ stop_daemon() {
         say "[dry-run] would run: pmx kill (pid $DPID)"
         return 0
     fi
-    PM2_SERVICE_GUARD=off pmx_cmd kill >"$TMP/kill.log" 2>&1 || true
+    PMX_SERVICE_GUARD=off PM2_SERVICE_GUARD=off pmx_cmd kill >"$TMP/kill.log" 2>&1 || true
     if ! wait_gone "$DPID" 10; then
         kill -TERM "$DPID" 2>/dev/null || true
         if ! wait_gone "$DPID" 5; then
@@ -944,7 +959,7 @@ resurrect_outside_service() {
         say "[dry-run] would run: pmx resurrect"
         return 0
     fi
-    if ! PM2_SERVICE_GUARD=off pmx_cmd resurrect >"$TMP/resurrect.log" 2>&1; then
+    if ! PMX_SERVICE_GUARD=off PM2_SERVICE_GUARD=off pmx_cmd resurrect >"$TMP/resurrect.log" 2>&1; then
         cat "$TMP/resurrect.log" >&2
         warn "pmx resurrect failed: your apps are listed in $PMX_HOME/dump.pm2 (run: pmx resurrect)"
         return 1
@@ -985,7 +1000,7 @@ WANT_PATH=""
 WANT_NODE=""
 NODE_NOTE=""
 startup_plan() {
-    _plan=$(env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true NO_COLOR=1 \
+    _plan=$(env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PMX_DISCRETE_MODE=true PM2_DISCRETE_MODE=true NO_COLOR=1 \
         PMX_STARTUP_DRY_RUN=1 "$BIN" startup systemd -u "$USER_NAME" --hp "$HOME" 2>/dev/null |
         sed "s/$ESC\[[0-9;]*m//g") || _plan=""
     # "[PMX] …" (pmx 9.28 on) or "[PM2] …" (an older pmx pinned with --version)
@@ -1143,8 +1158,8 @@ setup_unit() {
         UNIT_CHANGED=1
         return 0
     fi
-    if as_root env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PM2_DISCRETE_MODE=true \
-        ${PM2_NODE:+"PM2_NODE=$PM2_NODE"} ${NVM_DIR:+"NVM_DIR=$NVM_DIR"} \
+    if as_root env "PATH=$PATH" "PMX_HOME=$PMX_HOME" "PM2_HOME=$PMX_HOME" "HOME=$HOME" PMX_DISCRETE_MODE=true PM2_DISCRETE_MODE=true \
+        ${L_NODE:+"PMX_NODE=$L_NODE"} ${L_NODE:+"PM2_NODE=$L_NODE"} ${NVM_DIR:+"NVM_DIR=$NVM_DIR"} \
         ${BUN_INSTALL:+"BUN_INSTALL=$BUN_INSTALL"} \
         "$BIN" startup systemd -u "$USER_NAME" --hp "$HOME" >"$TMP/startup.log" 2>&1 &&
         as_root systemctl daemon-reload; then
@@ -1252,7 +1267,7 @@ try_handover() {
     fi
     say "handing the running daemon ($(daemon_label), pid $DPID) over to pmx $VERSION: apps keep running"
     _hrc=0
-    PMX_UPDATE_HANDOVER_ONLY=1 PM2_SERVICE_GUARD=off pmx_cmd update >"$TMP/update.log" 2>&1 || _hrc=$?
+    PMX_UPDATE_HANDOVER_ONLY=1 PMX_SERVICE_GUARD=off PM2_SERVICE_GUARD=off pmx_cmd update >"$TMP/update.log" 2>&1 || _hrc=$?
     case $_hrc in
         0) return 0 ;;
         3)
@@ -1339,7 +1354,7 @@ link_prodman() {
         return 0
     fi
     if [ -z "$L_URL" ] || [ -z "$L_PUBLIC" ] || [ -z "$L_SECRET" ]; then
-        warn "not linked: set PRODMAN_URL, PM2_PUBLIC_KEY and PM2_SECRET_KEY together"
+        warn "not linked: set PRODMAN_URL, PMX_PUBLIC_KEY and PMX_SECRET_KEY (or PM2_PUBLIC_KEY and PM2_SECRET_KEY) together"
         [ -f "$PMX_HOME/agent.json5" ] && LINKED=1
         return 0
     fi
@@ -1518,7 +1533,7 @@ summary() {
             say "pmx $VERSION is installed; no daemon is running yet (pmx startup to run it as a service, or pmx start <app> --autostart)"
         fi
         if [ "$LINKED" != 1 ]; then
-            say "not linked to prodman: run pmx link to sign in and pick a bucket, or re-run with PRODMAN_URL, PM2_PUBLIC_KEY and PM2_SECRET_KEY (or run pmx link <secret> <public>)"
+            say "not linked to prodman: run pmx link to sign in and pick a bucket, or re-run with PRODMAN_URL, PMX_PUBLIC_KEY and PMX_SECRET_KEY (or PM2_PUBLIC_KEY and PM2_SECRET_KEY, or run pmx link <secret> <public>)"
         fi
         if [ "$SYSTEMD" != 1 ] && [ "$(uname -s)" = Darwin ]; then
             say "to start pmx at login, run: pmx startup (and the command it prints)"
