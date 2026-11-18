@@ -27,8 +27,8 @@ PROG="pmx install"
 # pmx binary ("<platform>=<sha256> …"). Empty in the repository copy. Check this script by
 # hand with: minisign -Vm install.sh -P <key> (key: docs/install.md).
 PMX_SIGNING_KEYS="RWRu5PCt5yCSpMbA05EfMQAiknfqoxtbIZwE0tSCw5iRhpJht/4gboqm"
-PMX_RELEASE_VERSION="9.33.0"
-PMX_RELEASE_SHA256S="linux-x64=408c3d77e246cf71895abf9f12238ef8f4d81052b6f2db14363999f6c829c2c5 linux-arm64=a4054401c6456c6c80a8ba11bfee6b18ea26e8eca86619291842ba2c7069a72a linux-x64-musl=5e10a9477b9281222799c9142b6fa2e3fd9aa0d2a22299bbac4f1dfade1c91d3 linux-arm64-musl=192368eb5c00c6f964e0bffcf7d3167bb3b7d34ee5c0d32c20f15cea343f15ff linux-armhf=8eaff5dba7cd44132e2eebc4d6a7b873432ef0f277c1753b81c7123ebd566d4b darwin-x64=b46a9faac3c452fae5fe8a4b1ecf6a223e73af6262277ec57b0261ffd607c76f darwin-arm64=afc678ef153148ad05748f65031c0297efac6e1cb41508e62489ae0bdaa55f70"
+PMX_RELEASE_VERSION="9.34.0"
+PMX_RELEASE_SHA256S="linux-x64=b25eda79f2cacad925de4e2c022ce2d5215be1ab5561a00d907fa631877142c0 linux-arm64=c56046790e56694b619f79e045cc3fe86b0468f081d90123ef89b5d18cc569e6 linux-x64-musl=3c71f9ee87c0217bcc52073574cf992d3947a7cebf6b1564111b8f4c3c3e507f linux-arm64-musl=0b93bc5c002e8e0b612d7091368be1b84ef87d8ec5ccaceeb3de6f9e0d3db07b linux-armhf=9c3a827820ffca390d6f6a970edfb774d48bb696e0bde5a0ccfe51e4ef47e49a darwin-x64=1786d6ee2661175d9f1aa41e650d23f1ea084b5d24c3e41195490a1476fbc2ae darwin-arm64=8cc9fd144f2b076d6b42c9ca043b29f02970eceef50c1ce6a992db399978d82e"
 
 usage() {
     cat <<'EOF'
@@ -41,6 +41,9 @@ Options:
   --dir <dir>        install directory (env PMX_INSTALL_DIR, default ~/.local/bin)
   --base-url <url>   directory holding the assets and .sha256 files (env PMX_BASE_URL)
   --no-setup         install the binary and aliases only (env PMX_SETUP=0)
+  --sudo-link        link /usr/local/bin/pmx to the installed pmx (sudo), so `sudo pmx`
+                     finds it (sudo does not search ~/.local/bin); never replaces another
+                     pmx there (env PMX_SUDO_LINK=1)
   --uninstall        stop pmx, remove its service, binary and aliases (keeps the pmx home)
   --print-platform   print the release asset this host needs (e.g. linux-armhf) and exit
   -h, --help         this help
@@ -68,12 +71,14 @@ OPT_VERSION=""
 OPT_DIR=""
 OPT_BASE=""
 OPT_SETUP=""
+OPT_SUDO_LINK="${PMX_SUDO_LINK:-}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run | -n) DRY_RUN=1 ;;
         --uninstall) UNINSTALL=1 ;;
         --print-platform) PRINT_PLATFORM=1 ;;
         --no-setup) OPT_SETUP=0 ;;
+        --sudo-link) OPT_SUDO_LINK=1 ;;
         --version) [ $# -ge 2 ] || { usage >&2; exit 2; }; OPT_VERSION=$2; shift ;;
         --version=*) OPT_VERSION=${1#*=} ;;
         --dir) [ $# -ge 2 ] || { usage >&2; exit 2; }; OPT_DIR=$2; shift ;;
@@ -693,6 +698,42 @@ install_binary() {
     done
     install_notices
     install_web
+}
+
+# `sudo pmx …` (02 D-96): sudo's secure_path does not include ~/.local/bin, so a user install
+# is not found by `sudo pmx`. With --sudo-link (or PMX_SUDO_LINK=1) /usr/local/bin/pmx becomes
+# a link to the installed binary; it is never created over a file or a link to another pmx
+# (a system install). Without the flag: a note with the alternatives.
+SUDO_LINK=/usr/local/bin/pmx
+sudo_link() {
+    [ "$USER_ID" = 0 ] && return 0
+    case "$INSTALL_DIR" in
+        /usr/local/bin | /usr/bin | /bin | /usr/sbin | /sbin | /usr/local/sbin) return 0 ;;
+    esac
+    if [ -L "$SUDO_LINK" ] && [ "$(resolve "$SUDO_LINK")" = "$(resolve "$BIN")" ]; then
+        say "$SUDO_LINK links to $BIN: sudo pmx works"
+        return 0
+    fi
+    if [ -e "$SUDO_LINK" ] || [ -L "$SUDO_LINK" ]; then
+        if [ "$OPT_SUDO_LINK" = 1 ]; then
+            warn "$SUDO_LINK is not this pmx ($(describe_file "$SUDO_LINK")): left alone; sudo pmx runs that one, use sudo \"\$(command -v pmx)\" … for this one"
+        fi
+        return 0
+    fi
+    if [ "$OPT_SUDO_LINK" != 1 ]; then
+        say "note: sudo does not search $INSTALL_DIR: use sudo \"\$(command -v pmx)\" …, pmx module setup (it asks for sudo itself), or re-run with --sudo-link to link $SUDO_LINK"
+        return 0
+    fi
+    detect_privilege
+    if [ "$CAN_ROOT" != 1 ]; then
+        warn "could not link $SUDO_LINK (needs sudo); run: sudo ln -s $BIN $SUDO_LINK"
+        return 0
+    fi
+    if as_root mkdir -p /usr/local/bin && as_root ln -s "$BIN" "$SUDO_LINK"; then
+        is_dry || say "linked $SUDO_LINK -> $BIN: sudo pmx works"
+    else
+        warn "could not link $SUDO_LINK; run: sudo ln -s $BIN $SUDO_LINK"
+    fi
 }
 
 # The pmx home layout, created as this user so later root-run commands (pmx startup)
@@ -1481,6 +1522,9 @@ do_uninstall() {
             run rm -f "$INSTALL_DIR/$_n"
         fi
     done
+    if [ -L "$SUDO_LINK" ] && [ "$(resolve "$SUDO_LINK")" = "$(resolve "$BIN")" ]; then
+        as_root rm -f "$SUDO_LINK" || warn "could not remove $SUDO_LINK; run: sudo rm $SUDO_LINK"
+    fi
     run rm -f "$BIN"
     if [ -e "$WEB_BIN" ]; then
         run rm -f "$WEB_BIN"
@@ -1573,6 +1617,7 @@ main() {
     detect_platform
     download_verified
     install_binary
+    sudo_link
     if [ "$SETUP" = 0 ]; then
         summary
         return 0
