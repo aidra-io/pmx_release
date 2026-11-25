@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/westonpark/pmx_release.
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
 # Shared helpers for the pmx actions (sourced, not executed). Bash on Linux/macOS runners only.
 
 # gha_error <message>: workflow error annotation.

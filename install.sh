@@ -50,7 +50,7 @@ Options:
 
 Environment:
   PMX_INSTALL_DIR, PMX_VERSION, PMX_REPO (GitHub repository holding the releases,
-  default westonpark/pmx_release, public: no token needed), PMX_BASE_URL, PMX_SETUP,
+  default aidra-io/pmx_release, public: no token needed), PMX_BASE_URL, PMX_SETUP,
   PMX_PLATFORM (force an asset, e.g. linux-x64-musl or linux-armhf),
   PMX_GITHUB_TOKEN (download through the GitHub API, for a private mirror; GITHUB_TOKEN /
   GH_TOKEN are used too, but only when PMX_REPO names another repository),
@@ -145,7 +145,7 @@ sha256_of() {
 INSTALL_DIR=${OPT_DIR:-${PMX_INSTALL_DIR:-$HOME/.local/bin}}
 VERSION_REQ=${OPT_VERSION:-${PMX_VERSION:-latest}}
 VERSION_REQ=${VERSION_REQ#v}
-DEFAULT_REPO=westonpark/pmx_release
+DEFAULT_REPO=aidra-io/pmx_release
 REPO=${PMX_REPO:-$DEFAULT_REPO}
 BASE_URL=${OPT_BASE:-${PMX_BASE_URL:-}}
 BASE_URL=${BASE_URL%/}

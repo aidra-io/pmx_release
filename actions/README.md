@@ -5,10 +5,10 @@ runners only (x64 and arm64); Windows is not supported.
 
 | Action | Does |
 |---|---|
-| `westonpark/pmx_release/actions/setup@v1` | installs a verified pmx |
-| `westonpark/pmx_release/actions/bundle@v1` | `pmx bundle create` (optionally signed) |
-| `westonpark/pmx_release/actions/publish@v1` | `pmx bundle publish` to prodman, a GitHub release or a URL; optionally deploys and waits |
-| `westonpark/pmx_release/actions/deploy@v1` | `pmx bundle rollout` / `pmx bundle status --wait` |
+| `aidra-io/pmx_release/actions/setup@v1` | installs a verified pmx |
+| `aidra-io/pmx_release/actions/bundle@v1` | `pmx bundle create` (optionally signed) |
+| `aidra-io/pmx_release/actions/publish@v1` | `pmx bundle publish` to prodman, a GitHub release or a URL; optionally deploys and waits |
+| `aidra-io/pmx_release/actions/deploy@v1` | `pmx bundle rollout` / `pmx bundle status --wait` |
 
 Example workflows are in [`examples/workflows`](../examples/workflows): `review-flow`, `automated-flow`,
 `github-store`, `python-uv`, `signed-release`, `env-store-flow` (pmx 9.11: the env lives in prodman's env
@@ -19,7 +19,7 @@ store, so the workflow needs only `PRODMAN_TOKEN` — no `env`/`env-key` secrets
 `@v1` is a moving major tag; `actions-v1.<minor>.<patch>` tags are immutable. The `pmx.json` next to
 these files pins the pmx release the actions install by default, so `@v1` follows new pmx releases;
 `pmx-version` pins one. For production pipelines pin the action by commit SHA:
-`uses: westonpark/pmx_release/actions/publish@<40-hex> # actions-v1.2.0`.
+`uses: aidra-io/pmx_release/actions/publish@<40-hex> # actions-v1.2.0`.
 
 ## setup
 

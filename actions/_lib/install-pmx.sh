@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/westonpark/pmx_release.
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
 # Installs a verified pmx for the actions (GHA-010).
 #
 # Env:
@@ -21,7 +21,7 @@ require_unix_runner
 
 want=${PMX_VERSION_INPUT:-pinned}
 pmx_json=${PMX_ACTIONS_PMX_JSON:-$here/../pmx.json}
-base=${PMX_ACTIONS_RELEASE_BASE:-https://github.com/westonpark/pmx_release/releases/download}
+base=${PMX_ACTIONS_RELEASE_BASE:-https://github.com/aidra-io/pmx_release/releases/download}
 cache_root=${RUNNER_TOOL_CACHE:-${TMPDIR:-/tmp}/pmx-tool-cache}
 
 version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
@@ -105,7 +105,7 @@ version=$pinned_ver
 case "$want" in
   pinned | "") ;;
   latest)
-    url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/westonpark/pmx_release/releases/latest) ||
+    url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/aidra-io/pmx_release/releases/latest) ||
       die "could not resolve the latest pmx release"
     version=${url##*/v}
     [[ $version =~ $version_re ]] || die "could not parse the latest pmx release from $url"

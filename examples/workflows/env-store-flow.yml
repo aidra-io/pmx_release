@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/westonpark/pmx_release.
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
 # Build a bundle that carries no env and publish it to prodman. The variables live in prodman's
 # env store and reach each server sealed to its host key (pmx 9.11 on the servers): GitHub holds
 # neither the env nor a bundle key, only PRODMAN_TOKEN. Rotate a credential in prodman, then
@@ -25,8 +25,8 @@ jobs:
           node-version: 24
           cache: npm
       - id: bundle
-        uses: westonpark/pmx_release/actions/bundle@v1 # no env / env-key inputs
-      - uses: westonpark/pmx_release/actions/publish@v1
+        uses: aidra-io/pmx_release/actions/bundle@v1 # no env / env-key inputs
+      - uses: aidra-io/pmx_release/actions/publish@v1
         with:
           file: ${{ steps.bundle.outputs.file }}
           prodman-url: ${{ vars.PRODMAN_URL }}
