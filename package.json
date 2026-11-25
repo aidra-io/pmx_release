@@ -4,5 +4,5 @@
   "private": true,
   "description": "pmx release metadata: the version of the latest pmx release (read by prodman's update check). pmx is installed from the GitHub releases of this repository, not from npm.",
   "license": "SEE LICENSE IN LICENSE",
-  "homepage": "https://github.com/westonpark/pmx_release"
+  "homepage": "https://github.com/aidra-io/pmx_release"
 }

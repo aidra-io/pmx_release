@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/westonpark/pmx_release.
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
 name: pmx deploy
 description: Request a deployment of a published bundle (pmx bundle rollout) and optionally wait for it.
 inputs:

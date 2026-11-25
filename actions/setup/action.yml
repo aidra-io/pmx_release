@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/westonpark/pmx_release.
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
 name: Set up pmx
 description: Install a verified pmx binary (no daemon is started).
 inputs:

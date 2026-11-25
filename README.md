@@ -66,13 +66,13 @@ curl -fsSL https://pmx.aidra.io/install.sh | sh
 here, which downloads the pmx binary from that release. The same script, straight from GitHub:
 
 ```sh
-curl -fsSL https://github.com/westonpark/pmx_release/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/aidra-io/pmx_release/releases/latest/download/install.sh | sh
 ```
 
 and on the `main` branch of this repository:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/westonpark/pmx_release/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/aidra-io/pmx_release/main/install.sh | sh
 ```
 
 No GitHub account or token is needed. Run it as the user that runs your apps (not as root,
@@ -113,7 +113,7 @@ Options go after `sh -s --`; environment variables go before `sh` (or are export
 | `--uninstall` | | remove pmx (see [Uninstall](#uninstall)) |
 | `-h`, `--help` | | show the installer's help |
 | `PMX_PLATFORM` | detected | force an asset, e.g. `linux-x64-musl` on a glibc host, or `linux-armhf` |
-| `PMX_REPO` | `westonpark/pmx_release` | GitHub repository to download releases from (for a mirror) |
+| `PMX_REPO` | `aidra-io/pmx_release` | GitHub repository to download releases from (for a mirror) |
 | `PMX_GITHUB_TOKEN` | | token for a **private** mirror repository named by `PMX_REPO` (not needed for this repository) |
 | `PRODMAN_URL`, `PM2_PUBLIC_KEY`, `PM2_SECRET_KEY` | | link the host to this prodman bucket (all three are needed) |
 | `PM2_MACHINE_NAME` | host name | machine name shown in prodman |
@@ -124,7 +124,7 @@ Options go after `sh -s --`; environment variables go before `sh` (or are export
 Pin a version:
 
 ```sh
-curl -fsSL https://github.com/westonpark/pmx_release/releases/download/v9.35.0/install.sh |
+curl -fsSL https://github.com/aidra-io/pmx_release/releases/download/v9.35.0/install.sh |
   PMX_VERSION=9.35.0 sh
 ```
 
@@ -146,14 +146,14 @@ curl -fsSL https://pmx.aidra.io/install.sh |
 ## Manual install
 
 Download the asset for your platform and its checksum file from the
-[latest release](https://github.com/westonpark/pmx_release/releases/latest), verify it, and
+[latest release](https://github.com/aidra-io/pmx_release/releases/latest), verify it, and
 put it on your `PATH` with the aliases.
 
 Linux (replace the asset name to match your platform from the table above):
 
 ```sh
 asset=pmx-linux-x64        # pmx-linux-arm64, pmx-linux-armhf, pmx-linux-x64-musl, pmx-linux-arm64-musl
-base=https://github.com/westonpark/pmx_release/releases/latest/download
+base=https://github.com/aidra-io/pmx_release/releases/latest/download
 curl -fsSLO "$base/$asset" -O "$base/$asset.sha256"
 sha256sum -c "$asset.sha256"              # must print: <asset>: OK
 mkdir -p ~/.local/bin
@@ -167,7 +167,7 @@ macOS:
 
 ```sh
 asset=pmx-darwin-arm64     # Intel Macs: pmx-darwin-x64
-base=https://github.com/westonpark/pmx_release/releases/latest/download
+base=https://github.com/aidra-io/pmx_release/releases/latest/download
 curl -fsSLO "$base/$asset" -O "$base/$asset.sha256"
 shasum -a 256 -c "$asset.sha256"          # must print: <asset>: OK
 mkdir -p ~/.local/bin
