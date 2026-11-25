@@ -27,8 +27,8 @@ PROG="pmx install"
 # pmx binary ("<platform>=<sha256> …"). Empty in the repository copy. Check this script by
 # hand with: minisign -Vm install.sh -P <key> (key: docs/install.md).
 PMX_SIGNING_KEYS="RWRu5PCt5yCSpMbA05EfMQAiknfqoxtbIZwE0tSCw5iRhpJht/4gboqm"
-PMX_RELEASE_VERSION="9.35.1"
-PMX_RELEASE_SHA256S="linux-x64=4763962df8c8616af427e65cf41d969991d6a0ae818f59772e2fac0a20c4cd47 linux-arm64=4c651ddf3503d1e1b7bde8d5e50c69c98f146e76f4e5ec433ddec65a6e2bd73e linux-x64-musl=4cb1fa476a542191bb2a7592eb94b3d98c21a6cb7b21fb5b7c2874fbe52f1bc8 linux-arm64-musl=aad70db73bc04af3bc8d1531df26eb8d1e5de35d2b828567ac2a2e17aef9b9a5 linux-armhf=5c0633bccfd272c8af25a4eded8151c371cb70e42f51b0f019d9795c7fa3ad80 darwin-x64=7ec92afad2b60ef0c195362d056d0cfbcb8c1512c3a58d87aa4c3586a1b52e40 darwin-arm64=82616bd059d17a4c39591370279d60f83373c50658a0ffad8fd1a6aba946a3a9"
+PMX_RELEASE_VERSION="9.35.2"
+PMX_RELEASE_SHA256S="linux-x64=5f8ce42abee029648bf6052d857659d0b74959ac045ae7cdf4761cb253d9c69d linux-arm64=45f436727e8d2f36583d7d2f9eb31d18a85c22c950ba71aa52c5d2ddabfb6075 linux-x64-musl=47ba1fe8cf26e7dbe65e599758e04fa99c2655c7edd61df9f889921f54f9c5e5 linux-arm64-musl=e33acc186a016edaed0bef45514133cec78f5b4a82d55484604a7d1cd5f366d3 linux-armhf=e7efa4663cb0377743f72daf1227da86fad3ec3315403b11ac49a19ad54db6e5 darwin-x64=d271dd137398a38db4fbd267e9c59e4b1418a86953aa1a6741ea78a217558c04 darwin-arm64=d921929eed272291d32d2a679d6912a3a7307171a226f37d03814e215f490a91"
 
 usage() {
     cat <<'EOF'
