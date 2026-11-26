@@ -1,0 +1,44 @@
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
+# Check the repository's packages for known vulnerabilities in Prodman on every push to main and
+# every pull request: findings are annotated on the files, listed in the job summary with links
+# to Prodman's vulnerability library and uploaded to GitHub code scanning (SARIF). The job fails
+# on critical findings.
+#
+# Needs the secret PRODMAN_TOKEN (Prodman → Settings → API tokens, developer role) and, when the
+# token sees more than one bucket, the variable PRODMAN_BUCKET.
+name: pmx scan
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: pmx-scan-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  scan:
+    # pull requests from forks get no secrets: skip them rather than fail
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # upload-sarif; remove with the upload step
+    steps:
+      - uses: actions/checkout@v4
+      # Optional: install the dependencies first so installed packages are scanned too
+      # - run: npm ci --ignore-scripts
+      - id: scan
+        uses: aidra-io/pmx_release/actions/scan@v1
+        with:
+          token: ${{ secrets.PRODMAN_TOKEN }}
+          bucket: ${{ vars.PRODMAN_BUCKET }}
+          fail-on: critical
+          show: high
+          sarif: "true"
+      - name: upload to code scanning
+        if: always() && steps.scan.outputs.sarif-file != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif-file }}
+          category: pmx-scan

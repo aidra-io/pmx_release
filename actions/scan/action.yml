@@ -1,0 +1,106 @@
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
+name: pmx scan
+description: Catalogue the repository's packages, check them for known vulnerabilities in Prodman, annotate the findings and fail on critical ones.
+inputs:
+  token:
+    description: "Prodman API token with the developer role (secret: secrets.PRODMAN_TOKEN)"
+    required: true
+  bucket:
+    description: Prodman bucket name or id (optional when the token sees one bucket)
+    default: ""
+  url:
+    description: Prodman URL
+    default: https://www.aidra.io
+  path:
+    description: Folder(s) to scan, one per line or separated by spaces
+    default: "."
+  project:
+    description: Project name (default the repository, owner/repo)
+    default: ""
+  fail-on:
+    description: "Fail for findings at or above: critical, high, medium, low or none"
+    default: critical
+  show:
+    description: "List findings at or above: critical, high, medium, low or all"
+    default: high
+  sarif:
+    description: "true writes pmx-scan.sarif (for github/codeql-action/upload-sarif)"
+    default: "false"
+  timeout:
+    description: How long to wait for Prodman's result
+    default: 120s
+  pmx-version:
+    description: "pinned, latest or an exact pmx version (9.38.0 or later)"
+    default: pinned
+outputs:
+  critical:
+    description: Critical findings
+    value: ${{ steps.scan.outputs.critical }}
+  high:
+    description: High findings
+    value: ${{ steps.scan.outputs.high }}
+  medium:
+    description: Medium findings
+    value: ${{ steps.scan.outputs.medium }}
+  low:
+    description: Low findings
+    value: ${{ steps.scan.outputs.low }}
+  report-url:
+    description: The scan's report in Prodman
+    value: ${{ steps.scan.outputs.report-url }}
+  sarif-file:
+    description: The SARIF file (with sarif true)
+    value: ${{ steps.scan.outputs.sarif-file }}
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PMX_VERSION_INPUT: ${{ inputs.pmx-version }}
+      run: bash "$ACTION_PATH/../_lib/install-pmx.sh"
+    - id: scan
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        PMX_BIN: ${{ steps.install.outputs.path }}
+        IN_PATH: ${{ inputs.path }}
+        IN_PROJECT: ${{ inputs.project }}
+        IN_FAIL_ON: ${{ inputs.fail-on }}
+        IN_SHOW: ${{ inputs.show }}
+        IN_SARIF: ${{ inputs.sarif }}
+        IN_TIMEOUT: ${{ inputs.timeout }}
+        PRODMAN_URL: ${{ inputs.url }}
+        PRODMAN_TOKEN: ${{ inputs.token }}
+        PRODMAN_BUCKET: ${{ inputs.bucket }}
+      run: |
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . "$ACTION_PATH/../_lib/common.sh"
+        pmx_env
+        mask_value "$PRODMAN_TOKEN"
+        require_value token "$PRODMAN_TOKEN"
+        require_value url "$PRODMAN_URL"
+        require_one_of fail-on "$IN_FAIL_ON" critical high medium low none
+        require_one_of show "$IN_SHOW" critical high medium low all
+        require_one_of sarif "$IN_SARIF" true false
+        [[ $IN_TIMEOUT =~ ^[0-9]+(ms|s|m|h)?$ ]] || die "input 'timeout' must be a duration such as 120s or 5m (got '$IN_TIMEOUT')"
+        [ -n "$PRODMAN_BUCKET" ] || unset PRODMAN_BUCKET
+
+        args=(scan --source github-action --fail-on "$IN_FAIL_ON" --timeout "$IN_TIMEOUT")
+        if [ "$IN_SHOW" = all ]; then args+=(--all); else args+=(--show "$IN_SHOW"); fi
+        [ -z "$IN_PROJECT" ] || args+=(--project "$IN_PROJECT")
+        if is_true "$IN_SARIF"; then args+=(--sarif pmx-scan.sarif); fi
+        args+=(--)
+        # one folder per line or separated by spaces (read does not expand globs)
+        read -r -a folders <<<"${IN_PATH//$'\n'/ }"
+        for f in ${folders[@]+"${folders[@]}"}; do
+          [[ $f != -* ]] || die "input 'path' must name folders (got '$f')"
+          args+=("$f")
+        done
+        [ "${#folders[@]}" -gt 0 ] || args+=(.)
+
+        # pmx writes the outputs, the annotations and the job summary itself. Exit codes pass
+        # through: 0 clean, 1 findings at or above fail-on, 2 usage, 3 upload/auth/network.
+        "${PMX_BIN:-pmx}" "${args[@]}"
