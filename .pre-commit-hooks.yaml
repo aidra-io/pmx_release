@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Mike Warriner. Licensed for use with pmx; see https://github.com/aidra-io/pmx_release.
+# pre-commit hooks of pmx (https://pre-commit.com), published as .pre-commit-hooks.yaml at the root
+# of aidra-io/pmx_release (10 CLI-376). They run the pmx on PATH (language: system).
+#
+#   repos:
+#     - repo: https://github.com/aidra-io/pmx_release
+#       rev: v9.38.0
+#       hooks:
+#         - id: pmx-scan
+#           # args: [--offline-ok]
+- id: pmx-scan
+  name: pmx scan (known vulnerabilities)
+  description: Catalogues the repository's packages, checks them in Prodman and blocks the commit on critical findings (pmx scan --pre-commit).
+  entry: pmx scan --pre-commit
+  language: system
+  pass_filenames: false
+  always_run: true
