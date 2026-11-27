@@ -2,16 +2,16 @@
   "version": "9.39.0",
   "assets": {
     "linux-x64": {
-      "sha256": "4edd5cd6f5a668b8c7ac37befd799da6ffd9fe048a4dc211aabb70c628fc5d4c"
+      "sha256": "0749a36fa33cf95adce797f9de9d8c4bbe35ee1f5d8f638d12bf48d4c5cc2e28"
     },
     "linux-arm64": {
-      "sha256": "b5b16166795aa79596de599931e0a83c7d47a42e301575fc0e553703347bf4ed"
+      "sha256": "67d0b7a24986ae3dae25775aa7a7fd2b029c97dd4b151a893a3b09d4b9573b8c"
     },
     "darwin-arm64": {
-      "sha256": "d1856edcb7205b76b207b40335b74c56def590ff454f6d22235020acf338df57"
+      "sha256": "00be9cd0854dfd6fe05e559fe8cbcb0d713b61deba411ea12a6d9b6377a44860"
     },
     "darwin-x64": {
-      "sha256": "8ee4b6913b88ac113c04d2a6bbe72d2463edd63bfd19b1c9ab300e241551429c"
+      "sha256": "53c69dea87a88f3896c1da79585ac4ac8869bb8826225ed2ec0be61b4ad6af79"
     }
   }
 }
